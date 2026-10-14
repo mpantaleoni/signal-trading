@@ -1,0 +1,37 @@
+[project]
+name = "signal-trading"
+version = "0.1.0"
+description = "Short-horizon equity signal system — Phase 1: data layer"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pyarrow>=17",
+    "yfinance>=0.2.50",
+    "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3",
+]
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v -m 'not network'"
+markers = [
+    "network: tests that make real network calls (skipped by default)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+]

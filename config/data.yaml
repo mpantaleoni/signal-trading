@@ -1,0 +1,32 @@
+# Data layer configuration — Phase 1
+# All dates are ISO strings; "today" is replaced with date.today() at runtime.
+
+start_date: "2005-01-01"
+end_date: "today"
+
+# Local cache location (git-ignored; Parquet + SQLite)
+cache_dir: "data"
+
+# Primary data provider: yfinance | stooq
+provider: "yfinance"
+
+# Incremental update: overlap window to detect adj_close rewrites
+overlap_sessions: 10
+
+# Symbols with no data: retry only after this many days
+no_data_retry_days: 30
+
+# Adj_close change tolerance: if relative diff in overlap > this, full refetch
+adj_tolerance: 0.02
+
+# Integrity checks
+large_return_threshold: 0.40   # flag adj returns larger than this
+stale_price_run: 5             # flag N+ identical consecutive closes
+
+# "With data" threshold: fraction of in-index sessions that must have bars
+with_data_threshold: 0.90
+
+# Network
+throttle_sleep: 0.5      # seconds between yfinance calls in bulk mode
+max_retries: 3
+retry_backoff: 2.0       # exponential backoff base (seconds)

@@ -1,0 +1,39 @@
+# Universe configuration — Phase 1
+
+# S&P 500 constituent history
+# Primary source: https://github.com/fja05680/sp500
+# Vendored to data/raw/sp500_history.csv; fetch with: python -m src.cli universe fetch-constituents
+constituent_source: "data/raw/sp500_history.csv"
+constituent_sha256: ""   # filled in after download (by fetch-constituents command)
+constituent_commit: ""   # GitHub commit hash of the source file
+
+# Ticker aliases: historical ticker -> current yfinance symbol
+# These are KNOWN renames; unmapped ambiguous cases go to missing_coverage.
+aliases:
+  "FB": "META"
+  "FBHS": "FBHS"
+  "BRK.B": "BRK-B"
+  "BRK.A": "BRK-A"
+  "BF.B": "BF-B"
+  "BF.A": "BF-A"
+
+# ETF cross-check universe (CLAUDE.md §3)
+etfs:
+  - SPY
+  - QQQ
+  - IWM
+  - XLK
+  - XLF
+  - XLE
+  - XLV
+  - XLY
+  - XLP
+  - XLI
+  - XLU
+  - XLB
+  - EFA
+  - EEM
+  - EWG
+  - EWJ
+  - TLT
+  - GLD
