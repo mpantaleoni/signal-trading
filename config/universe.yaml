@@ -4,7 +4,7 @@
 # Primary source: https://github.com/fja05680/sp500
 # Vendored to data/raw/sp500_history.csv; fetch with: python -m src.cli universe fetch-constituents
 constituent_source: "data/raw/sp500_history.csv"
-constituent_sha256: ""   # filled in after download (by fetch-constituents command)
+constituent_sha256: "36326709d46d6cd25834de5df457b16f5f96fad3a06b9beac28f7b88aa0b0d54"
 constituent_commit: ""   # GitHub commit hash of the source file
 
 # Ticker aliases: historical ticker -> current yfinance symbol

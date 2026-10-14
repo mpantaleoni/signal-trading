@@ -17,7 +17,9 @@ import bisect
 import csv
 import hashlib
 import io
+import json
 import logging
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date
@@ -204,8 +206,6 @@ def fetch_constituents(dest: Path) -> tuple[str, str]:
     Returns (sha256_hex, filename_on_github).
     Saves to *dest* atomically.
     """
-    import json
-
     # 1. List repo root to find the CSV filename (it includes the date)
     req = urllib.request.Request(
         _GITHUB_API,
@@ -225,7 +225,6 @@ def fetch_constituents(dest: Path) -> tuple[str, str]:
     raw_url = _RAW_BASE + urllib.parse.quote(filename)
 
     # 2. Download the file
-    import urllib.parse
     req2 = urllib.request.Request(raw_url, headers={"User-Agent": "signal-trading/1.0"})
     with urllib.request.urlopen(req2, timeout=60) as resp:
         data = resp.read()
