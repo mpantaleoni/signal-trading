@@ -45,6 +45,11 @@ jobs:
           restore-keys: |
             scanner-data-${{ runner.os }}-
 
+      # Fetch constituent CSV on cache miss (first run or cache evicted)
+      - name: Fetch S&P 500 constituents
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: python -m src.cli universe fetch-constituents
+
       - name: Run scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
