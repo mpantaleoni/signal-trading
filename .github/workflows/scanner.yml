@@ -77,6 +77,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -- .
           git pull --rebase
           git add docs/
           git diff --staged --quiet || git commit -m "chore: update status page [skip ci]"
