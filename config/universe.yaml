@@ -1,4 +1,4 @@
-# Universe configuration — Phase 1
+# Universe configuration
 
 # S&P 500 constituent history
 # Primary source: https://github.com/fja05680/sp500
@@ -6,6 +6,16 @@
 constituent_source: "data/raw/sp500_history.csv"
 constituent_sha256: "36326709d46d6cd25834de5df457b16f5f96fad3a06b9beac28f7b88aa0b0d54"
 constituent_commit: ""   # GitHub commit hash of the source file
+
+# Liquidity filter: minimum 20-day average dollar volume to trade a stock
+# $5M is conservative enough to pass nearly all current S&P 500 members
+# while filtering out genuinely thin historical names.
+liquidity_min_adv_usd: 5_000_000
+
+# Earnings blackout: OFF (free earnings dates from yfinance are unreliable;
+# revisit in Phase 2 once backtester is running and impact can be measured).
+earnings_blackout_enabled: false
+earnings_blackout_days: 3   # sessions before known earnings date (if enabled)
 
 # Ticker aliases: historical ticker -> current yfinance symbol
 # These are KNOWN renames; unmapped ambiguous cases go to missing_coverage.

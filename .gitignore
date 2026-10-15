@@ -37,3 +37,4 @@ htmlcov/
 # Secrets
 .env
 secrets.yaml
+data/experiments.db

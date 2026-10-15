@@ -1,0 +1,20 @@
+# Costs and tax configuration (CLAUDE.md §5)
+#
+# Commission model: Fineco standard flat-fee for US equities
+# €12.95 per order (entry and exit charged separately).
+# Verified: Fineco standard pricing for NYSE/NASDAQ orders.
+# No percentage component for this account type.
+
+commission_fixed: 12.95   # EUR per trade (one-way)
+commission_pct: 0.0       # fraction of trade value (0 = flat fee only)
+
+# Slippage: estimated market impact + spread, per side
+slippage_bps: 5           # basis points per side
+
+# Stress test: report is also produced with costs multiplied by this factor
+stress_cost_multiplier: 2.0
+
+# Tax: German Abgeltungsteuer (flat tax on capital gains)
+# 25% + Solidaritätszuschlag 5.5% → effective 26.375%
+tax_rate: 0.26375
+tax_annual_allowance: 1000.0   # EUR Sparerpauschbetrag (single filer, 2024 rate)

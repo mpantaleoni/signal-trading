@@ -1,0 +1,12 @@
+engine_a:
+  rsi_entry: 10
+  max_hold_days: 10
+  spy_symbol: "SPY"
+
+engine_b:
+  top_n: 10
+  activity_lookback_fast: 21
+  activity_lookback_slow: 252
+  momentum_lookback: 21
+  momentum_skip: 2
+  spy_symbol: "SPY"

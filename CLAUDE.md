@@ -173,6 +173,9 @@ Before Phase 4: re-run the final validation on a paid survivorship-free data sou
 
 ## 11. Open decisions
 
-- Liquidity threshold value
-- Commission model for the owner's broker
-- Whether to enable the earnings blackout
+All resolved:
+
+- **Liquidity threshold**: $5M 20-day average dollar volume (`config/universe.yaml`)
+- **Commission model**: Fineco flat fee €12.95 per trade (one-way), 0% variable,
+  5 bp slippage per side (`config/costs.yaml`)
+- **Earnings blackout**: OFF for now; revisit in Phase 2 after measuring backtest impact

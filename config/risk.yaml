@@ -1,0 +1,11 @@
+risk_per_trade: 0.0075
+max_position_pct: 0.10
+max_positions_engine_a: 8
+max_positions_engine_b: 10
+max_positions_combined: 15
+sector_cap: 3
+drawdown_warning_pct: 0.10
+drawdown_stop_pct: 0.20
+atr_floor: 0.001
+min_history_days: 210
+initial_capital: 100000

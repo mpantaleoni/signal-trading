@@ -153,6 +153,13 @@ class CacheManager:
 
         # ── 5. No data ───────────────────────────────────────────────────────
         if new_df.empty:
+            if not full_fetch:
+                # Incremental fetch returned empty — could be a transient API
+                # issue. Keep existing data intact and retry next run.
+                logger.warning(
+                    "%s: incremental fetch returned empty; keeping existing data", symbol
+                )
+                return "skipped"
             retry_after = date.today() + timedelta(days=self.no_data_retry_days)
             self._upsert_meta(
                 provider.name, symbol,
@@ -306,12 +313,28 @@ class CacheManager:
             ).fetchall()
         return [r[0] for r in rows]
 
-    def all_integrity_failures(self) -> list[dict]:
+    def latest_run_id(self) -> Optional[str]:
+        """Return the run_id of the most recently finished run, or None."""
         with self._db() as conn:
-            rows = conn.execute(
-                "SELECT run_id, symbol, date, check_name, detail "
-                "FROM integrity_failures ORDER BY id"
-            ).fetchall()
+            row = conn.execute(
+                "SELECT run_id FROM runs WHERE finished_at IS NOT NULL "
+                "ORDER BY finished_at DESC LIMIT 1"
+            ).fetchone()
+        return row[0] if row else None
+
+    def all_integrity_failures(self, run_id: Optional[str] = None) -> list[dict]:
+        with self._db() as conn:
+            if run_id:
+                rows = conn.execute(
+                    "SELECT run_id, symbol, date, check_name, detail "
+                    "FROM integrity_failures WHERE run_id=? ORDER BY id",
+                    (run_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT run_id, symbol, date, check_name, detail "
+                    "FROM integrity_failures ORDER BY id"
+                ).fetchall()
         return [
             {"run_id": r[0], "symbol": r[1], "date": r[2],
              "check_name": r[3], "detail": r[4]}
@@ -411,7 +434,8 @@ class CacheManager:
         """MD5 of the last 20 adj_close values (6 decimals) for quick change detection."""
         if "adj_close" not in df.columns or df.empty:
             return ""
-        vals = df["adj_close"].iloc[-20:].round(6).astype(str).tolist()
+        # Use explicit format to avoid pandas 2.x astype(str) leaving float NaN in list
+        vals = [f"{v:.6f}" if pd.notna(v) else "nan" for v in df["adj_close"].iloc[-20:]]
         return hashlib.md5(",".join(vals).encode()).hexdigest()
 
     def _last_completed_session(self) -> date:
