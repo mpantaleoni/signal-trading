@@ -1,0 +1,20 @@
+{
+  "as_of_date": "2026-10-14",
+  "equity": 100000.0,
+  "cash": 100000.0,
+  "initial_capital": 100000.0,
+  "peak_equity": 100000.0,
+  "drawdown_pct": 0.0,
+  "drawdown_status": "ok",
+  "engine": "a",
+  "open_positions": [],
+  "pending_orders": [],
+  "fills_today": [],
+  "trades_total": 0,
+  "equity_history": [
+    [
+      "2026-10-14",
+      100000.0
+    ]
+  ]
+}
