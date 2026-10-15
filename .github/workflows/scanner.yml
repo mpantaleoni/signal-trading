@@ -1,0 +1,94 @@
+name: Daily Scanner
+
+on:
+  schedule:
+    # 22:30 UTC Mon–Fri (after NYSE close at 21:00 UTC / 16:00 ET)
+    - cron: '30 22 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      engine:
+        description: 'Engine to run (a / b / combined)'
+        required: false
+        default: 'a'
+      dry_run:
+        description: 'Dry run (skip Telegram + state save)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write   # needed to commit docs/ status page
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Restore the data cache (parquet files + scanner state)
+      - name: Restore data cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: data/
+          key: scanner-data-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            scanner-data-${{ runner.os }}-
+
+      - name: Run scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          ENGINE="${{ github.event.inputs.engine || 'a' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          ARGS="--engine $ENGINE"
+          [ "$DRY_RUN" = "true" ] && ARGS="$ARGS --dry-run"
+          python -m src.cli scanner run $ARGS
+
+      # Always save cache so next run picks up fresh data
+      - name: Save data cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/
+          key: scanner-data-${{ runner.os }}-${{ github.run_id }}
+
+      # Commit updated status page to the repo so GitHub Pages can serve it
+      - name: Publish status page
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --staged --quiet || git commit -m "chore: update status page [skip ci]"
+          git push
+
+      - name: Send failure alert
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+          chat  = os.getenv("TELEGRAM_CHAT_ID", "")
+          if token and chat:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat, "text": "🚨 <b>Scanner workflow failed</b>\nCheck GitHub Actions for details.",
+                        "parse_mode": "HTML"},
+                  timeout=10,
+              )
+          EOF

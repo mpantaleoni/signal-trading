@@ -764,6 +764,51 @@ def cmd_universe_fetch(args) -> int:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Scanner
+# ──────────────────────────────────────────────────────────────────────────────
+
+def cmd_scanner_run(args) -> int:
+    """Run the daily scanner, send Telegram alert, update status page."""
+    from .scanner.run import DailyScanner, DEFAULT_STATE_PATH
+    from .scanner.status_page import generate_status_page
+    from .alerts.telegram import TelegramAlert, format_report
+
+    config_dir = Path(args.config_dir)
+    state_path = Path(args.state_path) if args.state_path else DEFAULT_STATE_PATH
+    engine = args.engine
+    dry_run: bool = args.dry_run
+
+    scanner = DailyScanner(
+        config_dir=config_dir,
+        engine=engine,
+        state_path=state_path,
+        dry_run=dry_run,
+    )
+
+    report = scanner.scan()
+
+    # Status page (always, even in dry-run)
+    from .scanner.state import ScannerState
+    state = ScannerState.load(state_path, initial_capital=report.initial_capital)
+    generate_status_page(report, state)
+
+    # Telegram alert
+    if not dry_run:
+        alert = TelegramAlert.from_env()
+        if alert:
+            ok = alert.send(format_report(report))
+            if not ok:
+                logger.warning("Telegram send failed.")
+        else:
+            logger.info("No Telegram credentials — skipping alert.")
+    else:
+        logger.info("[dry-run] Telegram alert skipped.")
+        logger.info(format_report(report))
+
+    return 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Parser
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -823,6 +868,17 @@ def build_parser() -> argparse.ArgumentParser:
     bt_wf = bt_sub.add_parser("walk-forward", help="Run walk-forward evaluation")
     bt_wf.add_argument("--engine", default="a", choices=["a", "b", "combined"], metavar="ENGINE")
     bt_wf.set_defaults(func=cmd_backtest_walk_forward)
+
+    # ── scanner ────────────────────────────────────────────────────────────────
+    sc_p = sub.add_parser("scanner", help="Daily scanner commands")
+    sc_sub = sc_p.add_subparsers(dest="subcommand", required=True)
+
+    sc_run = sc_sub.add_parser("run", help="Run the daily scanner")
+    sc_run.add_argument("--engine", default="a", choices=["a", "b", "combined"], metavar="ENGINE")
+    sc_run.add_argument("--dry-run", action="store_true", help="Skip Telegram and state save")
+    sc_run.add_argument("--state-path", default=None, metavar="PATH",
+                        help="Override default state file path")
+    sc_run.set_defaults(func=cmd_scanner_run)
 
     return parser
 
