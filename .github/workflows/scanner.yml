@@ -45,10 +45,12 @@ jobs:
           restore-keys: |
             scanner-data-${{ runner.os }}-
 
-      # Fetch constituent CSV on cache miss (first run or cache evicted)
+      # Fetch constituent CSV if not present in cache
       - name: Fetch S&P 500 constituents
-        if: steps.cache-restore.outputs.cache-hit != 'true'
-        run: python -m src.cli universe fetch-constituents
+        run: |
+          if [ ! -f data/raw/sp500_history.csv ]; then
+            python -m src.cli universe fetch-constituents
+          fi
 
       - name: Run scanner
         env:
@@ -75,6 +77,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase
           git add docs/
           git diff --staged --quiet || git commit -m "chore: update status page [skip ci]"
           git push
