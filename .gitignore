@@ -18,7 +18,7 @@ env/
 data/parquet/
 data/meta.sqlite
 data/raw/
-reports/
+/reports/
 
 # Pytest
 .pytest_cache/
