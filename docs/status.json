@@ -6,7 +6,7 @@
   "peak_equity": 100000.0,
   "drawdown_pct": 0.0,
   "drawdown_status": "ok",
-  "engine": "a",
+  "engine": "momentum",
   "open_positions": [],
   "pending_orders": [],
   "fills_today": [],

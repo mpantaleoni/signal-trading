@@ -6,11 +6,11 @@
   ...
   fold 8: train 2013–2017, test 2018
 
-For each fold: run all 3 param combos on train, pick best Sharpe, test on test.
-n_trials = 3 × 9 = 27 (used in DSR).
+For each fold: run all 9 param combos on train, pick best Sharpe, test on test.
+n_trials = 9 × 9 = 81 (used in DSR).
 
 Param combos (Momentum Engine):
-  top_n ∈ {10, 15, 20}
+  top_n ∈ {10, 15, 20} × short_n ∈ {5, 10, 15}
 """
 from __future__ import annotations
 
@@ -29,12 +29,12 @@ from .engine_momentum import MomentumBacktest
 
 logger = logging.getLogger(__name__)
 
-N_TRIALS: int = 27  # 3 combos × 9 folds
+N_TRIALS: int = 81  # 9 combos × 9 folds
 
 PARAM_GRID = [
-    {"top_n": 10},
-    {"top_n": 15},
-    {"top_n": 20},
+    {"top_n": top_n, "short_n": short_n}
+    for top_n in (10, 15, 20)
+    for short_n in (5, 10, 15)
 ]
 
 
@@ -115,6 +115,7 @@ class WalkForwardEvaluator:
         from ..config import EngineMomentumConfig
         eng_cfg = EngineMomentumConfig(
             top_n=params["top_n"],
+            short_n=params["short_n"],
             spy_symbol=self._base_eng.spy_symbol,
             target_portfolio_vol=self._base_eng.target_portfolio_vol,
             vol_floor=self._base_eng.vol_floor,

@@ -6,10 +6,6 @@ on:
     - cron: '30 22 * * 1-5'
   workflow_dispatch:
     inputs:
-      engine:
-        description: 'Engine to run (a / b / combined)'
-        required: false
-        default: 'a'
       dry_run:
         description: 'Dry run (skip Telegram + state save)'
         required: false
@@ -57,9 +53,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          ENGINE="${{ github.event.inputs.engine || 'a' }}"
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-          ARGS="--engine $ENGINE"
+          ARGS=""
           [ "$DRY_RUN" = "true" ] && ARGS="$ARGS --dry-run"
           python -m src.cli scanner run $ARGS
 

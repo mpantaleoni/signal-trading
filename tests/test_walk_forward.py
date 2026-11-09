@@ -51,6 +51,6 @@ class TestMakeFolds:
             curr_ts = folds[i][0]
             assert curr_ts.year == prev_ts.year + 1
 
-    def test_n_trials_is_27(self):
-        # 3 param combos × 9 folds
-        assert N_TRIALS == 27
+    def test_n_trials_is_81(self):
+        # 9 param combos (3 top_n × 3 short_n) × 9 folds
+        assert N_TRIALS == 81
