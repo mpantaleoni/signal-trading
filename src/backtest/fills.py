@@ -55,3 +55,19 @@ def compute_commission(
     variable_usd = commission_pct * trade_value_usd
     total = (fixed_usd + variable_usd) * stress_multiplier
     return total
+
+
+def compute_borrow_cost(
+    notional_usd: float,
+    annual_rate: float,
+    n_days: int = 1,
+) -> float:
+    """Daily stock borrow cost for a short position.
+
+    Parameters
+    ----------
+    notional_usd : shares × current_price in USD
+    annual_rate  : annualised borrow rate (e.g. 0.0050 for 50 bps)
+    n_days       : number of trading days to accrue (default 1)
+    """
+    return notional_usd * annual_rate * n_days / 252

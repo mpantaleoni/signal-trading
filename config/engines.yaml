@@ -1,12 +1,7 @@
-engine_a:
-  rsi_entry: 10
-  max_hold_days: 10
+momentum:
+  top_n: 15
+  short_n: 10                  # bottom-N shorts; 0 = long-only (disabled)
   spy_symbol: "SPY"
-
-engine_b:
-  top_n: 10
-  activity_lookback_fast: 21
-  activity_lookback_slow: 252
-  momentum_lookback: 21
-  momentum_skip: 2
-  spy_symbol: "SPY"
+  target_portfolio_vol: 0.15
+  vol_floor: 0.05
+  stock_sma_filter: 0          # stock-level SMA trend filter; 0 = disabled

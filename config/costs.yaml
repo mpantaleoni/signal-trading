@@ -18,3 +18,10 @@ stress_cost_multiplier: 2.0
 # 25% + Solidaritätszuschlag 5.5% → effective 26.375%
 tax_rate: 0.26375
 tax_annual_allowance: 1000.0   # EUR Sparerpauschbetrag (single filer, 2024 rate)
+
+# Minimum position size guard: skip if estimated commission > this fraction of trade value
+# At €12.95 flat fee × 1.10 EUR/USD = $14.25 per trade → min position ~$2,850
+min_position_commission_pct: 0.005  # 0.5%
+
+# Short-selling stock borrow cost (annualised, applied daily to short notional)
+borrow_cost_annual: 0.0050  # 50 bps/year — conservative estimate for liquid large caps

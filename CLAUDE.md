@@ -7,21 +7,22 @@ Status: Phase 0 spec, approved for Phase 1 implementation
 
 Build a system that scans a universe of liquid stocks and ETFs once per trading day,
 identifies entry and exit points for holds of roughly 2–20 trading days, and alerts the
-owner on his iPhone. Version 1 is long-only, uses daily bars and executes manually.
+owner on his iPhone. Version 1 is long/short, uses daily bars and executes manually.
 
 The goal is NOT to maximise backtested return. The goal is a strategy whose net return
 after costs and tax beats buy-and-hold SPY on a risk-adjusted basis, out-of-sample,
-with a maximum drawdown of 20% or less.
+with a maximum drawdown of 30% or less.
 
 ## 2. Scope
 
 In scope (v1):
 - US large caps (historical S&P 500 members) plus a list of liquid ETFs
 - Daily OHLCV data from free sources
-- Two signal engines (A and B, section 4) and a shared risk layer
+- Momentum engine with long top-N and short bottom-N legs, shared risk layer
 - Backtester, validation reports, daily scanner, Telegram alerts
+- Short selling (manual execution, US equities only)
 
-Out of scope (v1): intraday data, short selling, options, news/sentiment, European stocks,
+Out of scope (v1): intraday data, options, news/sentiment, European stocks,
 automated order execution, machine learning models. Do not add any of these without
 explicit instruction.
 
@@ -43,49 +44,46 @@ explicit instruction.
 - ETF cross-check universe: a configurable list of liquid sector, country and broad-index ETFs
   (e.g. SPY, QQQ, IWM, XLK, XLF, XLE, XLV, XLY, XLP, XLI, XLU, XLB, EFA, EEM, EWG, EWJ, TLT, GLD).
 
-## 4. Strategy definitions
+## 4. Strategy definition
 
-General timing rule for both engines: signals are computed from data up to and including
-the close of day t. Orders are filled at the open of day t+1. No exceptions.
+General timing rule: signals are computed from data up to and including the close of day t.
+Orders are filled at the open of day t+1. No exceptions.
 
-### Engine A — Trend-filtered pullback (holds of about 2–10 days)
+### Momentum Engine — Cross-sectional momentum (holds of about 1 month)
 
-Entry (all conditions true at close of day t):
-- Stock is a current universe member and passes the liquidity filter
-  (20-day average dollar volume above a configurable threshold)
-- Close > 200-day SMA
-- RSI(2) < `rsi_entry` (default 10)
-- Regime filter: SPY close > SPY 200-day SMA
+Rebalance on the first trading day of each month.
 
-Exit (first condition hit, evaluated at close, filled next open):
-- Close > 5-day SMA
-- Time stop: `max_hold_days` trading days (default 10)
-- Close < 200-day SMA
+Signals (both required; ticker dropped if either is None):
+- **12-1 momentum**: `(close[t-21] - close[t-273]) / close[t-273]`. Requires ≥ 273 rows.
+- **52-week-high pct**: `close[t] / max(high[t-252:t])`. Requires ≥ 252 rows.
+- **Composite rank**: rank each score percentile within the universe, then average:
+  `0.5 × rank_12_1 + 0.5 × rank_52wh`.
+  - **Long leg**: top `top_n` (default 15) descending.
+  - **Short leg**: bottom `short_n` (default 10) ascending. No SMA filter applied (shorts target laggards).
 
-Tunable parameters (and ONLY these): `rsi_entry` in {5, 10}, `max_hold_days` in {5, 10}.
+Regime filter (asymmetric):
+- SPY bull (12-1 momentum > 0 AND close > 200-day SMA): open/hold longs + open/hold shorts.
+- SPY bear: exit all longs; short book remains active (bearish conditions benefit shorts).
+- Drawdown stop: exit ALL positions (both sides) pending manual review.
 
-### Engine B — Short-term momentum in high-activity stocks (holds of about 1 month)
+Tunable parameters: `top_n` in {10, 15, 20}, `short_n` in {5, 10, 15}.
 
-- Rebalance on the first trading day of each month.
-- Activity filter: keep the top third of the universe by relative trading activity.
-  Proxy: 21-day average volume divided by 252-day average volume. (The research uses share
-  turnover = volume / shares outstanding; free historical shares-outstanding data is not
-  reliable, so this proxy is a documented deviation.)
-- Rank the filtered stocks by return over the past 21 trading days, skipping the most
-  recent 2 days.
-- Hold the top `top_n` stocks (default 10) until the next rebalance.
-- Regime filter: same as Engine A.
+### Risk layer
 
-Tunable parameter (and ONLY this): `top_n` in {5, 10, 15}.
-
-### Shared risk layer
-
-- Position sizing by volatility: each position sized so that a 2×ATR(20) move equals
-  `risk_per_trade` of portfolio equity (default 0.75%), capped at 10% of equity per position.
-- Maximum concurrent positions: Engine A 8, Engine B `top_n`, combined portfolio 15.
-- Sector cap: max 3 positions per sector (current sector classification; documented limitation).
-- Drawdown control: warning at 10% portfolio drawdown from peak; at 20%, no new entries and the
-  system is flagged as STOPPED pending manual review.
+- Position sizing (volatility-targeted):
+  ```
+  stock_annual_vol  = rolling 21-day std of daily log-returns × sqrt(252)
+  position_value    = (target_portfolio_vol / N) × equity / max(stock_annual_vol, vol_floor)
+  shares            = floor(position_value / price)
+  cap               = floor(max_position_pct × equity / price)
+  final_shares      = min(shares, cap)
+  ```
+  `target_portfolio_vol` default 0.15, `vol_floor` 0.05, N = top_n.
+- Maximum concurrent positions: 20, counting long + short combined.
+- Sector cap: max 3 positions per sector, long + short combined (current sector classification; documented limitation).
+- Short borrow cost: 50 bps/year annualised, accrued daily against short notional (`config/costs.yaml`).
+- Drawdown control: warning at 15% portfolio drawdown from peak; at 30%, no new entries and ALL
+  positions (long and short) are exited. System is flagged as STOPPED pending manual review.
 - Earnings blackout (optional, off by default): no new entries within 3 trading days before a
   known earnings date, if reliable dates are available.
 
@@ -102,17 +100,20 @@ Tunable parameter (and ONLY this): `top_n` in {5, 10, 15}.
 - Development period: 2005-01-01 to 2018-12-31.
 - Hold-out period: 2019-01-01 to present. Do NOT run anything on the hold-out period unless
   the owner explicitly instructs it. Each engine version gets one hold-out run.
-- Walk-forward evaluation on the development period (e.g. 5-year train, 1-year test, rolling).
+- Walk-forward evaluation on the development period: 9 folds (train 5 years, test 1 year,
+  rolling). Param grid: `top_n ∈ {10, 15, 20}` × `short_n ∈ {5, 10, 15}`, n_trials = 81.
 - Experiment registry: every backtest run is logged (parameters, period, metrics, git commit).
   The number of variants tested feeds a Deflated Sharpe Ratio calculation.
 - Benchmark: buy-and-hold SPY over the same period, same cost and tax treatment.
 
 Pass criteria (all must hold, on hold-out, net of costs and tax):
 1. Sharpe ratio above the SPY benchmark
-2. Maximum drawdown ≤ 20%
+2. Maximum drawdown ≤ 35%
 3. Positive total return
 4. Still beats SPY on Sharpe with costs doubled
 5. Same rules on the ETF universe are not loss-making
+
+Target (development): Sharpe > 0.40, max drawdown < 30%, walk-forward avg Sharpe > 0.30.
 
 Standard report metrics: CAGR, volatility, Sharpe, Sortino, max drawdown and duration,
 win rate, average win/loss, average holding period, turnover, exposure, number of trades,
@@ -128,7 +129,7 @@ costs paid, tax paid, deflated Sharpe, yearly returns table, equity curve vs SPY
 config/          YAML: universe, engines, risk, costs, tax, alerts
 src/data/        DataProvider interface, yfinance + Stooq providers, cache, integrity checks
 src/universe/    historical S&P 500 membership, ETF list, liquidity filter
-src/signals/     indicators, engine_a.py, engine_b.py
+src/signals/     indicators, engine_momentum.py
 src/portfolio/   sizing, risk layer, position book
 src/backtest/    event loop, fills, costs, tax, experiment registry
 src/reports/     metrics, deflated Sharpe, HTML/Markdown reports
@@ -179,3 +180,4 @@ All resolved:
 - **Commission model**: Fineco flat fee €12.95 per trade (one-way), 0% variable,
   5 bp slippage per side (`config/costs.yaml`)
 - **Earnings blackout**: OFF for now; revisit in Phase 2 after measuring backtest impact
+- **Short leg**: enabled, `short_n=10`, borrow cost 50 bps/year, asymmetric regime (long exits in bear, shorts remain)

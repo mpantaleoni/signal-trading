@@ -46,37 +46,28 @@ class CostConfig:
     stress_cost_multiplier: float = 2.0
     tax_rate: float = 0.26375
     tax_annual_allowance: float = 1000.0
+    min_position_commission_pct: float = 0.005  # skip if commission > 0.5% of trade value
+    borrow_cost_annual: float = 0.0050  # annualised borrow cost for short positions
 
 
 @dataclass
-class EngineAConfig:
-    rsi_entry: int = 10
-    max_hold_days: int = 10
+class EngineMomentumConfig:
+    top_n: int = 15
+    short_n: int = 0              # bottom-N short leg; 0 = long-only
     spy_symbol: str = "SPY"
-
-
-@dataclass
-class EngineBConfig:
-    top_n: int = 10
-    activity_lookback_fast: int = 21
-    activity_lookback_slow: int = 252
-    momentum_lookback: int = 21
-    momentum_skip: int = 2
-    spy_symbol: str = "SPY"
+    target_portfolio_vol: float = 0.15
+    vol_floor: float = 0.05
+    stock_sma_filter: int = 200   # only rank stocks above their N-day SMA; 0 = disabled
 
 
 @dataclass
 class RiskConfig:
-    risk_per_trade: float = 0.0075
     max_position_pct: float = 0.10
-    max_positions_engine_a: int = 8
-    max_positions_engine_b: int = 10
-    max_positions_combined: int = 15
-    sector_cap: int = 3
-    drawdown_warning_pct: float = 0.10
-    drawdown_stop_pct: float = 0.20
-    atr_floor: float = 0.001
-    min_history_days: int = 210
+    max_positions: int = 20       # combined long + short
+    sector_cap: int = 3           # combined long + short per sector
+    drawdown_warning_pct: float = 0.15
+    drawdown_stop_pct: float = 0.30
+    min_history_days: int = 273
     initial_capital: float = 100_000.0
 
 
@@ -85,8 +76,7 @@ class Config:
     data: DataConfig
     universe: UniverseConfig
     costs: CostConfig = field(default_factory=CostConfig)
-    engine_a: EngineAConfig = field(default_factory=EngineAConfig)
-    engine_b: EngineBConfig = field(default_factory=EngineBConfig)
+    momentum: EngineMomentumConfig = field(default_factory=EngineMomentumConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
 
 
@@ -152,38 +142,29 @@ def load_config(config_dir: Path = Path("config")) -> Config:
         stress_cost_multiplier=float(c.get("stress_cost_multiplier", 2.0)),
         tax_rate=float(c.get("tax_rate", 0.26375)),
         tax_annual_allowance=float(c.get("tax_annual_allowance", 1000.0)),
+        min_position_commission_pct=float(c.get("min_position_commission_pct", 0.005)),
+        borrow_cost_annual=float(c.get("borrow_cost_annual", 0.0050)),
     )
 
-    ea_raw = e.get("engine_a", {}) or {}
-    engine_a_cfg = EngineAConfig(
-        rsi_entry=int(ea_raw.get("rsi_entry", 10)),
-        max_hold_days=int(ea_raw.get("max_hold_days", 10)),
-        spy_symbol=str(ea_raw.get("spy_symbol", "SPY")),
-    )
-
-    eb_raw = e.get("engine_b", {}) or {}
-    engine_b_cfg = EngineBConfig(
-        top_n=int(eb_raw.get("top_n", 10)),
-        activity_lookback_fast=int(eb_raw.get("activity_lookback_fast", 21)),
-        activity_lookback_slow=int(eb_raw.get("activity_lookback_slow", 252)),
-        momentum_lookback=int(eb_raw.get("momentum_lookback", 21)),
-        momentum_skip=int(eb_raw.get("momentum_skip", 2)),
-        spy_symbol=str(eb_raw.get("spy_symbol", "SPY")),
+    em_raw = e.get("momentum", {}) or {}
+    momentum_cfg = EngineMomentumConfig(
+        top_n=int(em_raw.get("top_n", 15)),
+        short_n=int(em_raw.get("short_n", 0)),
+        spy_symbol=str(em_raw.get("spy_symbol", "SPY")),
+        target_portfolio_vol=float(em_raw.get("target_portfolio_vol", 0.20)),
+        vol_floor=float(em_raw.get("vol_floor", 0.05)),
+        stock_sma_filter=int(em_raw.get("stock_sma_filter", 200)),
     )
 
     risk_cfg = RiskConfig(
-        risk_per_trade=float(r.get("risk_per_trade", 0.0075)),
         max_position_pct=float(r.get("max_position_pct", 0.10)),
-        max_positions_engine_a=int(r.get("max_positions_engine_a", 8)),
-        max_positions_engine_b=int(r.get("max_positions_engine_b", 10)),
-        max_positions_combined=int(r.get("max_positions_combined", 15)),
+        max_positions=int(r.get("max_positions", 20)),
         sector_cap=int(r.get("sector_cap", 3)),
-        drawdown_warning_pct=float(r.get("drawdown_warning_pct", 0.10)),
-        drawdown_stop_pct=float(r.get("drawdown_stop_pct", 0.20)),
-        atr_floor=float(r.get("atr_floor", 0.001)),
-        min_history_days=int(r.get("min_history_days", 210)),
+        drawdown_warning_pct=float(r.get("drawdown_warning_pct", 0.15)),
+        drawdown_stop_pct=float(r.get("drawdown_stop_pct", 0.30)),
+        min_history_days=int(r.get("min_history_days", 273)),
         initial_capital=float(r.get("initial_capital", 100_000.0)),
     )
 
     return Config(data=data_cfg, universe=universe_cfg, costs=costs_cfg,
-                  engine_a=engine_a_cfg, engine_b=engine_b_cfg, risk=risk_cfg)
+                  momentum=momentum_cfg, risk=risk_cfg)
