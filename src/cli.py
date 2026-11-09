@@ -361,7 +361,7 @@ def _load_price_data(cache, cfg, sp500, start_date, end_date):
 
 def cmd_backtest_run(args) -> int:
     from .backtest.benchmark import run_spy_benchmark
-    from .backtest.engine import BacktestEngine
+    from .backtest.engine_momentum import MomentumBacktest
     from .backtest.registry import ExperimentRegistry
     from .reports.backtest_report import generate_backtest_report
     from .universe.symbols import resolve_symbol
@@ -374,7 +374,6 @@ def cmd_backtest_run(args) -> int:
 
     start_date = date.fromisoformat(args.start)
     config_dir = Path(args.config_dir)
-    engine_name = getattr(args, "engine", "a").lower()
 
     deps = _load_backtest_deps(config_dir)
     if deps[0] is None:
@@ -393,57 +392,19 @@ def cmd_backtest_run(args) -> int:
         except ValueError:
             return set()
 
-    if engine_name == "a":
-        engine = BacktestEngine(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            engine_cfg=cfg.engine_a,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            stress=getattr(args, "stress", False),
-            sector_map=sector_map,
-        )
-        logger.info("Running backtest: Engine A | %s → %s", start_date, end_date)
-        result = engine.run(start_date, end_date)
-
-    elif engine_name == "b":
-        from .backtest.engine_b import EngineBBacktest
-        engine = EngineBBacktest(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            engine_cfg=cfg.engine_b,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            stress=getattr(args, "stress", False),
-            sector_map=sector_map,
-        )
-        logger.info("Running backtest: Engine B | %s → %s", start_date, end_date)
-        result = engine.run(start_date, end_date)
-
-    elif engine_name == "combined":
-        from .backtest.combined_engine import CombinedBacktest
-        engine = CombinedBacktest(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            engine_a_cfg=cfg.engine_a,
-            engine_b_cfg=cfg.engine_b,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            stress=getattr(args, "stress", False),
-            sector_map=sector_map,
-        )
-        logger.info("Running backtest: Combined Engine | %s → %s", start_date, end_date)
-        result = engine.run(start_date, end_date)
-
-    else:
-        logger.error("Unknown engine: %s", engine_name)
-        return 1
+    engine = MomentumBacktest(
+        price_data=price_data,
+        calendar=calendar,
+        universe_members=members_fn,
+        initial_capital=cfg.risk.initial_capital,
+        engine_cfg=cfg.momentum,
+        risk_cfg=cfg.risk,
+        cost_cfg=cfg.costs,
+        stress=getattr(args, "stress", False),
+        sector_map=sector_map,
+    )
+    logger.info("Running backtest: Momentum Engine | %s → %s", start_date, end_date)
+    result = engine.run(start_date, end_date)
 
     logger.info(
         "Done: %d trades | commission=$%.0f | tax=$%.0f",
@@ -457,63 +418,33 @@ def cmd_backtest_run(args) -> int:
     # Stress run (only if not already in stress mode)
     stress_result = None
     if not getattr(args, "stress", False):
-        if engine_name == "a":
-            stress_engine = BacktestEngine(
-                price_data=price_data,
-                calendar=calendar,
-                universe_members=members_fn,
-                initial_capital=cfg.risk.initial_capital,
-                engine_cfg=cfg.engine_a,
-                risk_cfg=cfg.risk,
-                cost_cfg=cfg.costs,
-                stress=True,
-                sector_map=sector_map,
-            )
-            stress_result = stress_engine.run(start_date, end_date)
-        elif engine_name == "b":
-            from .backtest.engine_b import EngineBBacktest
-            stress_engine = EngineBBacktest(
-                price_data=price_data,
-                calendar=calendar,
-                universe_members=members_fn,
-                initial_capital=cfg.risk.initial_capital,
-                engine_cfg=cfg.engine_b,
-                risk_cfg=cfg.risk,
-                cost_cfg=cfg.costs,
-                stress=True,
-                sector_map=sector_map,
-            )
-            stress_result = stress_engine.run(start_date, end_date)
-        elif engine_name == "combined":
-            from .backtest.combined_engine import CombinedBacktest
-            stress_engine = CombinedBacktest(
-                price_data=price_data,
-                calendar=calendar,
-                universe_members=members_fn,
-                initial_capital=cfg.risk.initial_capital,
-                engine_a_cfg=cfg.engine_a,
-                engine_b_cfg=cfg.engine_b,
-                risk_cfg=cfg.risk,
-                cost_cfg=cfg.costs,
-                stress=True,
-                sector_map=sector_map,
-            )
-            stress_result = stress_engine.run(start_date, end_date)
+        stress_engine = MomentumBacktest(
+            price_data=price_data,
+            calendar=calendar,
+            universe_members=members_fn,
+            initial_capital=cfg.risk.initial_capital,
+            engine_cfg=cfg.momentum,
+            risk_cfg=cfg.risk,
+            cost_cfg=cfg.costs,
+            stress=True,
+            sector_map=sector_map,
+        )
+        stress_result = stress_engine.run(start_date, end_date)
 
     # Registry
     registry = ExperimentRegistry(Path("data/experiments.db"))
     from .backtest.walk_forward import N_TRIALS
     exp_id = registry.log_run(
-        engine=engine_name.upper() if engine_name != "combined" else "combined",
+        engine="momentum",
         start_date=start_date,
         end_date=end_date,
-        params={"engine": engine_name},
+        params={"engine": "momentum", "top_n": cfg.momentum.top_n},
         metrics={"n_trades": result.n_trades},
     )
     registry.close()
 
     # Generate report
-    output_path = Path("reports") / f"backtest_engine_{engine_name}_{start_date}_{end_date}.md"
+    output_path = Path("reports") / f"backtest_momentum_{start_date}_{end_date}.md"
     report = generate_backtest_report(
         result=result,
         benchmark_result=bench,
@@ -593,7 +524,6 @@ def cmd_backtest_walk_forward(args) -> int:
     from .backtest.registry import ExperimentRegistry
     from pathlib import Path
 
-    engine_name = getattr(args, "engine", "a").lower()
     config_dir = Path(args.config_dir)
     deps = _load_backtest_deps(config_dir)
     if deps[0] is None:
@@ -614,100 +544,27 @@ def cmd_backtest_walk_forward(args) -> int:
         except ValueError:
             return set()
 
-    if engine_name == "a":
-        from .backtest.walk_forward import WalkForwardEvaluator, N_TRIALS
-        evaluator = WalkForwardEvaluator(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            base_engine_cfg=cfg.engine_a,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            sector_map=sector_map,
-        )
-        logger.info("Starting walk-forward evaluation: Engine A (9 folds)...")
-        wf_result = evaluator.run()
-        n_trials = N_TRIALS
-        engine_label = "Engine A"
-        output_path = Path("reports") / "walk_forward_engine_a.md"
-
-    elif engine_name == "b":
-        from .backtest.walk_forward_b import WalkForwardEvaluatorB, N_TRIALS_B
-        evaluator = WalkForwardEvaluatorB(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            base_engine_cfg=cfg.engine_b,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            sector_map=sector_map,
-        )
-        logger.info("Starting walk-forward evaluation: Engine B (9 folds × 3 params = 27 trials)...")
-        wf_result = evaluator.run()
-        n_trials = N_TRIALS_B
-        engine_label = "Engine B"
-        output_path = Path("reports") / "walk_forward_engine_b.md"
-
-    elif engine_name == "combined":
-        from .backtest.walk_forward import WalkForwardEvaluator, N_TRIALS
-        from .backtest.walk_forward_b import WalkForwardEvaluatorB, N_TRIALS_B
-        from .backtest.walk_forward_combined import WalkForwardCombined, N_TRIALS_COMBINED
-
-        logger.info("Running Engine A walk-forward for combined evaluation...")
-        wf_a_evaluator = WalkForwardEvaluator(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            base_engine_cfg=cfg.engine_a,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            sector_map=sector_map,
-        )
-        wf_a_result = wf_a_evaluator.run()
-
-        logger.info("Running Engine B walk-forward for combined evaluation...")
-        wf_b_evaluator = WalkForwardEvaluatorB(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            base_engine_cfg=cfg.engine_b,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            sector_map=sector_map,
-        )
-        wf_b_result = wf_b_evaluator.run()
-
-        logger.info("Running Combined walk-forward (9 folds, fixed params)...")
-        combined_evaluator = WalkForwardCombined(
-            price_data=price_data,
-            calendar=calendar,
-            universe_members=members_fn,
-            initial_capital=cfg.risk.initial_capital,
-            base_engine_a_cfg=cfg.engine_a,
-            base_engine_b_cfg=cfg.engine_b,
-            risk_cfg=cfg.risk,
-            cost_cfg=cfg.costs,
-            wf_a_result=wf_a_result,
-            wf_b_result=wf_b_result,
-            sector_map=sector_map,
-        )
-        wf_result = combined_evaluator.run()
-        n_trials = N_TRIALS_COMBINED
-        engine_label = "Combined Engine"
-        output_path = Path("reports") / "walk_forward_combined.md"
-
-    else:
-        logger.error("Unknown engine: %s", engine_name)
-        return 1
+    from .backtest.walk_forward import WalkForwardEvaluator, N_TRIALS
+    evaluator = WalkForwardEvaluator(
+        price_data=price_data,
+        calendar=calendar,
+        universe_members=members_fn,
+        initial_capital=cfg.risk.initial_capital,
+        base_engine_cfg=cfg.momentum,
+        risk_cfg=cfg.risk,
+        cost_cfg=cfg.costs,
+        sector_map=sector_map,
+    )
+    logger.info("Starting walk-forward evaluation: Momentum Engine (9 folds × 3 params = 27 trials)...")
+    wf_result = evaluator.run()
+    n_trials = N_TRIALS
+    engine_label = "Momentum Engine"
+    output_path = Path("reports") / "walk_forward_momentum.md"
 
     # Registry
     registry = ExperimentRegistry(Path("data/experiments.db"))
     exp_id = registry.log_run(
-        engine=f"{engine_name.upper()}_walk_forward",
+        engine="momentum_walk_forward",
         start_date=start_date,
         end_date=end_date,
         params={"n_folds": 9, "n_trials": n_trials},
@@ -775,12 +632,10 @@ def cmd_scanner_run(args) -> int:
 
     config_dir = Path(args.config_dir)
     state_path = Path(args.state_path) if args.state_path else DEFAULT_STATE_PATH
-    engine = args.engine
     dry_run: bool = args.dry_run
 
     scanner = DailyScanner(
         config_dir=config_dir,
-        engine=engine,
         state_path=state_path,
         dry_run=dry_run,
     )
@@ -859,14 +714,12 @@ def build_parser() -> argparse.ArgumentParser:
     bt_sub = bt_p.add_subparsers(dest="subcommand", required=True)
 
     bt_run = bt_sub.add_parser("run", help="Run a backtest")
-    bt_run.add_argument("--engine", default="a", choices=["a", "b", "combined"], metavar="ENGINE")
     bt_run.add_argument("--start", default="2005-01-01", metavar="YYYY-MM-DD")
     bt_run.add_argument("--end", default="2018-12-31", metavar="YYYY-MM-DD")
     bt_run.add_argument("--stress", action="store_true", help="Apply 2× cost multiplier")
     bt_run.set_defaults(func=cmd_backtest_run)
 
     bt_wf = bt_sub.add_parser("walk-forward", help="Run walk-forward evaluation")
-    bt_wf.add_argument("--engine", default="a", choices=["a", "b", "combined"], metavar="ENGINE")
     bt_wf.set_defaults(func=cmd_backtest_walk_forward)
 
     # ── scanner ────────────────────────────────────────────────────────────────
@@ -874,7 +727,6 @@ def build_parser() -> argparse.ArgumentParser:
     sc_sub = sc_p.add_subparsers(dest="subcommand", required=True)
 
     sc_run = sc_sub.add_parser("run", help="Run the daily scanner")
-    sc_run.add_argument("--engine", default="a", choices=["a", "b", "combined"], metavar="ENGINE")
     sc_run.add_argument("--dry-run", action="store_true", help="Skip Telegram and state save")
     sc_run.add_argument("--state-path", default=None, metavar="PATH",
                         help="Override default state file path")

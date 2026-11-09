@@ -1,4 +1,4 @@
-"""Walk-forward evaluator for Engine A.
+"""Walk-forward evaluator for the Momentum Engine.
 
 9 folds: train 5 years, test 1 year, rolling by 1 year.
   fold 0: train 2005–2009, test 2010
@@ -6,11 +6,11 @@
   ...
   fold 8: train 2013–2017, test 2018
 
-For each fold: run all 4 param combos on train, pick best Sharpe, test on test.
-n_trials = 4 × 9 = 36 (used in DSR).
+For each fold: run all 3 param combos on train, pick best Sharpe, test on test.
+n_trials = 3 × 9 = 27 (used in DSR).
 
-Param combos (Engine A):
-  rsi_entry ∈ {5, 10}  ×  max_hold_days ∈ {5, 10}
+Param combos (Momentum Engine):
+  top_n ∈ {10, 15, 20}
 """
 from __future__ import annotations
 
@@ -24,17 +24,17 @@ import pandas as pd
 from ..data.calendar import TradingCalendar
 from ..portfolio.risk import SectorMap
 from ..reports.metrics import cagr, max_drawdown, sharpe
-from .engine import BacktestEngine, RunResult
+from .engine import RunResult
+from .engine_momentum import MomentumBacktest
 
 logger = logging.getLogger(__name__)
 
-N_TRIALS: int = 36  # 4 combos × 9 folds
+N_TRIALS: int = 27  # 3 combos × 9 folds
 
 PARAM_GRID = [
-    {"rsi_entry": 5, "max_hold_days": 5},
-    {"rsi_entry": 5, "max_hold_days": 10},
-    {"rsi_entry": 10, "max_hold_days": 5},
-    {"rsi_entry": 10, "max_hold_days": 10},
+    {"top_n": 10},
+    {"top_n": 15},
+    {"top_n": 20},
 ]
 
 
@@ -78,7 +78,7 @@ class WalkForwardResult:
         return freq
 
 
-def _make_folds(dev_start: date = date(2005, 1, 1), dev_end: date = date(2018, 12, 31)) -> list[tuple[date, date, date, date]]:
+def _make_folds() -> list[tuple[date, date, date, date]]:
     """Generate 9 (train_start, train_end, test_start, test_end) tuples."""
     folds = []
     for i in range(9):
@@ -112,13 +112,14 @@ class WalkForwardEvaluator:
         self._sector_map = sector_map
 
     def _run_with_params(self, params: dict, start: date, end: date) -> RunResult:
-        from ..config import EngineAConfig
-        eng_cfg = EngineAConfig(
-            rsi_entry=params["rsi_entry"],
-            max_hold_days=params["max_hold_days"],
+        from ..config import EngineMomentumConfig
+        eng_cfg = EngineMomentumConfig(
+            top_n=params["top_n"],
             spy_symbol=self._base_eng.spy_symbol,
+            target_portfolio_vol=self._base_eng.target_portfolio_vol,
+            vol_floor=self._base_eng.vol_floor,
         )
-        engine = BacktestEngine(
+        engine = MomentumBacktest(
             price_data=self._data,
             calendar=self._calendar,
             universe_members=self._members_fn,

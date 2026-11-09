@@ -4,12 +4,11 @@ Each run:
   1. Incremental price update (yfinance, today's members only)
   2. Fill yesterday's pending orders at today's open
   3. Mark-to-market equity + drawdown check
-  4. Engine A exit scan  (if engine in {a, combined})
-  5. Engine B rebalance  (if engine in {b, combined} and today is first session of month)
-  6. Regime filter + entry scans
-  7. Save state
-  8. Generate status page
-  9. Send Telegram alert
+  4. Check regime (SPY 12-1 momentum)
+  5. If regime bad or stopped: queue sells for all open positions
+  6. Else if rebalance day: rebalance (sell drops, buy new entries)
+  7. Year-end tax
+  8. Save state / generate status page / send Telegram alert
 
 No look-ahead: signals use df.loc[:t_ts].
 Fills use the next session's open (same guarantee as the backtester).
@@ -17,11 +16,13 @@ Fills use the next session's open (same guarantee as the backtester).
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from ..config import load_config
@@ -29,10 +30,13 @@ from ..data.cache import CacheManager
 from ..data.calendar import TradingCalendar
 from ..portfolio.positions import OrderSide, PendingOrder, Position, PositionBook
 from ..portfolio.risk import RiskManager, SectorMap
-from ..portfolio.sizing import compute_shares
-from ..signals.engine_a import compute_entry_signal, compute_exit_signals, compute_regime_ok
-from ..signals.engine_b import is_rebalance_day, select_engine_b_stocks
-from ..signals.indicators import atr
+from ..portfolio.sizing import compute_shares_vol_target
+from ..signals.engine_momentum import (
+    compute_spy_regime,
+    compute_stock_above_sma,
+    is_rebalance_day,
+    select_momentum_stocks,
+)
 from ..backtest.fills import compute_commission, compute_fill_price
 from ..backtest.tax import GermanTaxLedger
 from .state import ScannerState
@@ -66,7 +70,7 @@ class ScanReport:
     pending_orders: list[dict] = field(default_factory=list)
     open_positions: list[dict] = field(default_factory=list)
     trades_total: int = 0
-    engine: str = "a"
+    engine: str = "momentum"
 
 
 class DailyScanner:
@@ -74,8 +78,7 @@ class DailyScanner:
 
     Parameters
     ----------
-    config_dir : config/ directory (must contain data.yaml, universe.yaml, etc.)
-    engine     : "a" | "b" | "combined"
+    config_dir : config/ directory
     state_path : JSON file that persists PositionBook + cash between runs
     dry_run    : skip state save, status page write, and Telegram send
     """
@@ -83,12 +86,10 @@ class DailyScanner:
     def __init__(
         self,
         config_dir: Path = Path("config"),
-        engine: str = "a",
         state_path: Path = DEFAULT_STATE_PATH,
         dry_run: bool = False,
     ) -> None:
         self._config_dir = config_dir
-        self._engine = engine.lower()
         self._state_path = state_path
         self._dry_run = dry_run
 
@@ -119,7 +120,6 @@ class DailyScanner:
         if today is None:
             raise RuntimeError("No trading sessions in calendar")
 
-        # Update today's universe members only (not all-time ever)
         from ..universe.sp500 import SP500Universe
         from ..universe.symbols import resolve_symbol
 
@@ -168,14 +168,12 @@ class DailyScanner:
             annual_allowance_eur=cfg.costs.tax_annual_allowance,
         )
         risk_mgr = RiskManager(
-            max_positions_engine_a=cfg.risk.max_positions_engine_a,
-            max_positions_combined=cfg.risk.max_positions_combined,
+            max_positions=cfg.risk.max_positions,
             sector_cap=cfg.risk.sector_cap,
             drawdown_warning_pct=cfg.risk.drawdown_warning_pct,
             drawdown_stop_pct=cfg.risk.drawdown_stop_pct,
             initial_equity=state.peak_equity,
             sector_map=sector_map,
-            max_positions_engine_b=cfg.risk.max_positions_engine_b,
         )
 
         # ── determine sessions to process ─────────────────────────────────────
@@ -188,9 +186,9 @@ class DailyScanner:
             logger.info("Already up to date (as_of=%s)", state.as_of_date)
             sessions = []
 
-        spy_symbol = cfg.engine_a.spy_symbol
+        spy_symbol = cfg.momentum.spy_symbol
         fills_today: list[FillRecord] = []
-        mtm_equity = cash + book.mark_to_market({})  # fallback if no sessions
+        mtm_equity = cash + book.mark_to_market({})
         dd_status = "ok"
 
         # ── session loop ──────────────────────────────────────────────────────
@@ -251,40 +249,42 @@ class DailyScanner:
             risk_mgr.update_equity(mtm_equity)
             dd_status = risk_mgr.check_drawdown(mtm_equity)
 
-            # 3. Engine A exit scan
-            if self._engine in ("a", "combined"):
-                for pos in book.open_positions():
-                    if pos.engine != "A":
-                        continue
-                    df_t = price_data.get(pos.ticker)
-                    if df_t is None:
-                        continue
-                    df_slice = df_t.loc[df_t.index <= t_ts]
-                    if df_slice.empty:
-                        continue
-                    exits = compute_exit_signals(df_slice, pos.entry_date, cfg.engine_a.max_hold_days, calendar)
-                    reason = (
-                        "sma5_exit" if exits["sma5_exit"] else
-                        "sma200_exit" if exits["sma200_exit"] else
-                        "time_stop" if exits["time_stop"] else None
-                    )
-                    if reason and next_session is not None:
-                        book.add_pending(PendingOrder(pos.ticker, OrderSide.SELL, pos.shares, "A", reason))
-
-            # 4. Regime filter
+            # 3. Regime check
             spy_df_local = price_data.get(spy_symbol)
             regime_ok = False
             if spy_df_local is not None:
-                regime_ok = compute_regime_ok(spy_df_local.loc[spy_df_local.index <= t_ts])
+                regime_ok = compute_spy_regime(spy_df_local.loc[spy_df_local.index <= t_ts])
 
-            # 5. Engine A entry scan
-            if self._engine in ("a", "combined") and regime_ok and not risk_mgr.is_stopped and next_session:
+            # 4. Regime bad or stopped → exit all
+            if (not regime_ok or risk_mgr.is_stopped) and next_session is not None:
+                for pos in book.open_positions():
+                    book.add_pending(PendingOrder(pos.ticker, OrderSide.SELL, pos.shares, "momentum", "regime_exit"))
+
+            # 5. Rebalance on first session of month
+            elif is_rebalance_day(t, calendar) and next_session is not None:
                 members = members_fn(t)
-                pending_buy_tickers = {o.ticker for o in book.pending_orders() if o.side == OrderSide.BUY}
-                for ticker in members:
-                    if ticker in book.open_tickers or ticker in pending_buy_tickers or ticker == spy_symbol:
+                universe_dfs: dict = {}
+                for tk in members:
+                    if tk not in price_data or tk == spy_symbol:
                         continue
-                    if not risk_mgr.can_add_position(book, "A", ticker):
+                    sma_n = cfg.momentum.stock_sma_filter
+                    if sma_n > 0:
+                        df_slice = price_data[tk].loc[price_data[tk].index <= t_ts]
+                        if not compute_stock_above_sma(df_slice, sma_n):
+                            continue
+                    universe_dfs[tk] = price_data[tk]
+                target = select_momentum_stocks(universe_dfs, t_ts, top_n=cfg.momentum.top_n)
+                target_set = set(target)
+
+                for pos in book.open_positions():
+                    if pos.ticker not in target_set:
+                        book.add_pending(PendingOrder(pos.ticker, OrderSide.SELL, pos.shares, "momentum", "rebalance_exit"))
+
+                pending_buys = {o.ticker for o in book.pending_orders() if o.side == OrderSide.BUY}
+                for ticker in target:
+                    if ticker in book.open_tickers or ticker in pending_buys:
+                        continue
+                    if not risk_mgr.can_add_position(book, ticker):
                         continue
                     df_t = price_data.get(ticker)
                     if df_t is None:
@@ -292,51 +292,32 @@ class DailyScanner:
                     df_slice = df_t.loc[df_t.index <= t_ts]
                     if len(df_slice) < cfg.risk.min_history_days:
                         continue
-                    if not compute_entry_signal(df_slice, rsi_entry=cfg.engine_a.rsi_entry, min_adv_usd=0.0):
-                        continue
-                    shares = _size(df_slice, mtm_equity, cfg.risk)
-                    if shares > 0:
-                        book.add_pending(PendingOrder(ticker, OrderSide.BUY, shares, "A", "entry"))
-
-            # 6. Engine B rebalance
-            if self._engine in ("b", "combined") and is_rebalance_day(t, calendar) and next_session:
-                if regime_ok and not risk_mgr.is_stopped:
-                    members = members_fn(t)
-                    universe_dfs = {tk: price_data[tk] for tk in members if tk in price_data and tk != spy_symbol}
-                    target = select_engine_b_stocks(
-                        universe_dfs, t_ts,
-                        top_n=cfg.engine_b.top_n,
-                        activity_fast=cfg.engine_b.activity_lookback_fast,
-                        activity_slow=cfg.engine_b.activity_lookback_slow,
-                        momentum_lookback=cfg.engine_b.momentum_lookback,
-                        momentum_skip=cfg.engine_b.momentum_skip,
-                        min_history=cfg.risk.min_history_days,
+                    vol = _stock_vol(df_slice)
+                    price = float(df_slice["adj_close"].iloc[-1])
+                    shares = compute_shares_vol_target(
+                        equity=mtm_equity,
+                        price=price,
+                        stock_annual_vol=vol,
+                        target_portfolio_vol=cfg.momentum.target_portfolio_vol,
+                        n_positions=cfg.momentum.top_n,
+                        max_position_pct=cfg.risk.max_position_pct,
+                        vol_floor=cfg.momentum.vol_floor,
                     )
-                    target_set = set(target)
-                    for pos in book.open_positions():
-                        if pos.engine == "B" and pos.ticker not in target_set:
-                            book.add_pending(PendingOrder(pos.ticker, OrderSide.SELL, pos.shares, "B", "rebalance_exit"))
-                    pending_buys = {o.ticker for o in book.pending_orders() if o.side == OrderSide.BUY}
-                    for ticker in target:
-                        if ticker in book.open_tickers or ticker in pending_buys:
-                            continue
-                        if not risk_mgr.can_add_position(book, "B", ticker):
-                            continue
-                        df_t = price_data.get(ticker)
-                        if df_t is None:
-                            continue
-                        df_slice = df_t.loc[df_t.index <= t_ts]
-                        if len(df_slice) < cfg.risk.min_history_days:
-                            continue
-                        shares = _size(df_slice, mtm_equity, cfg.risk)
-                        if shares > 0:
-                            book.add_pending(PendingOrder(ticker, OrderSide.BUY, shares, "B", "rebalance_entry"))
-                else:
-                    for pos in book.open_positions():
-                        if pos.engine == "B":
-                            book.add_pending(PendingOrder(pos.ticker, OrderSide.SELL, pos.shares, "B", "regime_exit"))
+                    if shares == 0:
+                        continue
 
-            # 7. Year-end tax
+                    min_pct = cfg.costs.min_position_commission_pct
+                    if min_pct > 0:
+                        trade_val_est = shares * price
+                        comm_est = compute_commission(
+                            cfg.costs.commission_fixed, cfg.costs.commission_pct, trade_val_est
+                        )
+                        if trade_val_est > 0 and comm_est / trade_val_est > min_pct:
+                            continue
+
+                    book.add_pending(PendingOrder(ticker, OrderSide.BUY, shares, "momentum", "rebalance_entry"))
+
+            # 6. Year-end tax
             nxt = calendar.next_session(t)
             if nxt is not None and nxt.year != t.year:
                 cash -= tax_ledger.year_end()
@@ -390,7 +371,7 @@ class DailyScanner:
             ],
             open_positions=open_positions_report,
             trades_total=len(state.trades),
-            engine=self._engine,
+            engine="momentum",
         )
 
         if not self._dry_run:
@@ -413,9 +394,13 @@ def _close_prices(book: PositionBook, price_data: dict, t: date, t_ts: pd.Timest
     return out
 
 
-def _size(df_slice: pd.DataFrame, equity: float, risk_cfg) -> int:
-    from ..signals.indicators import atr as _atr
-    atr_s = _atr(df_slice["high"], df_slice["low"], df_slice["adj_close"], 20)
-    atr_val = float(atr_s.iloc[-1]) if not pd.isna(atr_s.iloc[-1]) else 0.0
-    price = float(df_slice["adj_close"].iloc[-1])
-    return compute_shares(equity, price, atr_val, risk_cfg.risk_per_trade, risk_cfg.max_position_pct, risk_cfg.atr_floor)
+def _stock_vol(df_slice: pd.DataFrame, window: int = 21) -> float:
+    """Rolling 21-day std of daily log-returns × sqrt(252)."""
+    closes = df_slice["adj_close"]
+    if len(closes) < window + 1:
+        return 0.0
+    log_rets = np.log(closes / closes.shift(1)).dropna()
+    if len(log_rets) < window:
+        return 0.0
+    vol = float(log_rets.iloc[-window:].std())
+    return vol * math.sqrt(252)

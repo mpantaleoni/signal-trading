@@ -43,18 +43,14 @@ class RiskManager:
 
     def __init__(
         self,
-        max_positions_engine_a: int,
-        max_positions_combined: int,
+        max_positions: int,
         sector_cap: int,
         drawdown_warning_pct: float,
         drawdown_stop_pct: float,
         initial_equity: float,
         sector_map: Optional[SectorMap] = None,
-        max_positions_engine_b: int = 10,
     ) -> None:
-        self._max_engine_a = max_positions_engine_a
-        self._max_engine_b = max_positions_engine_b
-        self._max_combined = max_positions_combined
+        self._max_positions = max_positions
         self._sector_cap = sector_cap
         self._warn_pct = drawdown_warning_pct
         self._stop_pct = drawdown_stop_pct
@@ -69,13 +65,6 @@ class RiskManager:
         if equity > self._peak_equity:
             self._peak_equity = equity
             self._stopped = False  # recover once new peak reached
-
-    @property
-    def current_drawdown(self) -> float:
-        """Fraction below peak (0.0 = at peak, 0.20 = 20% below peak)."""
-        if self._peak_equity <= 0:
-            return 0.0
-        return max(0.0, 1.0 - (self._peak_equity / self._peak_equity))
 
     def drawdown_from_peak(self, equity: float) -> float:
         if self._peak_equity <= 0:
@@ -101,23 +90,13 @@ class RiskManager:
     def can_add_position(
         self,
         book: PositionBook,
-        engine: str,
         ticker: str,
     ) -> bool:
         """Return True if adding a position is allowed by all risk rules."""
         if self._stopped:
             return False
 
-        # Combined limit
-        if book.total_open() >= self._max_combined:
-            return False
-
-        # Engine A limit
-        if engine == "A" and book.count_engine("A") >= self._max_engine_a:
-            return False
-
-        # Engine B limit
-        if engine == "B" and book.count_engine("B") >= self._max_engine_b:
+        if book.total_open() >= self._max_positions:
             return False
 
         # Sector cap

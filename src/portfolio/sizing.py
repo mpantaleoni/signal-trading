@@ -1,4 +1,4 @@
-"""Position sizing — volatility-based (ATR) with equity fraction cap."""
+"""Position sizing — volatility-based (ATR) and volatility-targeted."""
 from __future__ import annotations
 
 import math
@@ -36,6 +36,50 @@ def compute_shares(
 
     atr_effective = max(atr_value, price * atr_floor)
     raw_shares = math.floor(equity * risk_per_trade / (2.0 * atr_effective))
+
+    max_shares = math.floor(equity * max_position_pct / price)
+
+    result = min(raw_shares, max_shares)
+    return result if result >= 1 else 0
+
+
+def compute_shares_vol_target(
+    equity: float,
+    price: float,
+    stock_annual_vol: float,
+    target_portfolio_vol: float,
+    n_positions: int,
+    max_position_pct: float,
+    vol_floor: float = 0.05,
+) -> int:
+    """Compute shares using volatility-targeting sizing.
+
+    Each position is sized so that its contribution to portfolio volatility equals
+    target_portfolio_vol / n_positions, assuming independent returns.
+
+        position_value = (target_portfolio_vol / n_positions) * equity
+                         / max(stock_annual_vol, vol_floor)
+        shares = floor(position_value / price)
+        cap    = floor(max_position_pct * equity / price)
+
+    Returns min(shares, cap), or 0 if < 1.
+
+    Parameters
+    ----------
+    equity              : current portfolio equity in USD
+    price               : current price per share in USD
+    stock_annual_vol    : annualised log-return volatility of the stock
+    target_portfolio_vol: target annualised portfolio volatility (e.g. 0.15)
+    n_positions         : number of positions in the target portfolio (top_n)
+    max_position_pct    : maximum fraction of equity per position (e.g. 0.10)
+    vol_floor           : minimum allowed stock vol to prevent huge positions (e.g. 0.05)
+    """
+    if equity <= 0 or price <= 0 or n_positions <= 0:
+        return 0
+
+    effective_vol = max(stock_annual_vol, vol_floor)
+    position_value = (target_portfolio_vol / n_positions) * equity / effective_vol
+    raw_shares = math.floor(position_value / price)
 
     max_shares = math.floor(equity * max_position_pct / price)
 
